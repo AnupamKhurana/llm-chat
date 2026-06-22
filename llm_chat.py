@@ -530,10 +530,10 @@ def stream_and_process(model: str, messages: List[Dict[str, Any]], tools: List[C
         "tool_calls": serializable_tool_calls if serializable_tool_calls else None
     }
 
-def stream_and_process_llamacpp(endpoint: str, model_name: str, messages: List[Dict[str, Any]], tools: List[Callable], options: Dict[str, Any] = None) -> Dict[str, Any]:
+def stream_and_process_openai_compatible(endpoint: str, model_name: str, messages: List[Dict[str, Any]], tools: List[Callable], options: Dict[str, Any] = None, headers: Dict[str, str] = None) -> Dict[str, Any]:
     """
-    Stream the response from llama.cpp server, process <think> tags for color, and collect tool calls.
-    Returns the complete message object to append to history.
+    Generic function to stream the response from an OpenAI-compatible server (like llama.cpp or Unsloth Studio),
+    process <think> tags for color, and collect tool calls.
     """
     # 1. Format tools to OpenAI JSON format
     formatted_tools = [function_to_openai_tool(t) for t in tools] if tools else None
@@ -551,16 +551,20 @@ def stream_and_process_llamacpp(endpoint: str, model_name: str, messages: List[D
         payload["tools"] = formatted_tools
 
     url = f"{endpoint.rstrip('/')}/v1/chat/completions"
+    req_headers = {'Content-Type': 'application/json'}
+    if headers:
+        req_headers.update(headers)
+        
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'}
+        headers=req_headers
     )
     
     try:
         response = urllib.request.urlopen(req)
     except Exception as e:
-        console.print(f"[bold red]Error: llama.cpp request failed: {e}[/bold red]")
+        console.print(f"[bold red]Error: Request failed: {e}[/bold red]")
         return {}
 
     collected_content = ""
@@ -611,7 +615,7 @@ def stream_and_process_llamacpp(endpoint: str, model_name: str, messages: List[D
                             arg_chunk = tc.get("function", {}).get("arguments", "")
                             accumulated_tool_calls[idx]["function"]["arguments"] += arg_chunk
                     
-                    # Handle reasoning content stream (e.g. from llama.cpp server for reasoning models)
+                    # Handle reasoning content stream (e.g. from server for reasoning models)
                     reasoning = delta.get("reasoning_content")
                     if reasoning:
                         if not in_think:
@@ -707,6 +711,16 @@ def stream_and_process_llamacpp(endpoint: str, model_name: str, messages: List[D
         "content": raw_content,
         "tool_calls": serializable_tool_calls if serializable_tool_calls else None
     }
+
+def stream_and_process_llamacpp(endpoint: str, model_name: str, messages: List[Dict[str, Any]], tools: List[Callable], options: Dict[str, Any] = None) -> Dict[str, Any]:
+    return stream_and_process_openai_compatible(endpoint, model_name, messages, tools, options)
+
+def stream_and_process_unsloth(endpoint: str, model_name: str, messages: List[Dict[str, Any]], tools: List[Callable], options: Dict[str, Any] = None) -> Dict[str, Any]:
+    headers = {}
+    token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return stream_and_process_openai_compatible(endpoint, model_name, messages, tools, options, headers)
 
 def start_llama_cpp_server(endpoint: str, model_name: str = None):
     """
@@ -845,6 +859,145 @@ def start_llama_cpp_server(endpoint: str, model_name: str = None):
     else:
         console.print("[bold red]Timeout: Could not detect successful server startup in logs.[/bold red]")
         console.print("Please make sure you have successfully completed the script's interactive inputs and the server is running.")
+        sys.exit(1)
+
+def start_unsloth_server(endpoint: str):
+    """
+    Launches ~/run_unsloth_server.sh in a new terminal window or directly if needed,
+    and waits for the server to respond.
+    """
+    server_script = os.path.expanduser("~/run_unsloth_server.sh")
+    if not os.path.exists(server_script):
+        console.print(f"[bold red]Startup script '{server_script}' not found.[/bold red]")
+        sys.exit(1)
+
+    log_dir = CACHE_DIR
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "unsloth_server.log")
+    pid_file = os.path.join(log_dir, "unsloth_server.pid")
+
+    # Clear previous log file and pid file if they exist
+    for fpath in (log_file, pid_file):
+        if os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except Exception:
+                pass
+
+    # Parse host and port from endpoint
+    host = None
+    port = None
+    if endpoint:
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(endpoint)
+            if parsed.hostname:
+                host = parsed.hostname
+            if parsed.port:
+                port = str(parsed.port)
+        except Exception:
+            pass
+
+    # Build arguments for the server script
+    args_list = []
+    if host:
+        args_list.extend(["-H", host])
+    if port:
+        args_list.extend(["-p", port])
+
+    args_str = " ".join(args_list)
+
+    # Find an available terminal emulator
+    emulator = None
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        emulators = ["gnome-terminal", "konsole", "xfce4-terminal", "xterm", "kitty", "alacritty", "uxterm"]
+        for em in emulators:
+            if os.system(f"which {em} > /dev/null 2>&1") == 0:
+                emulator = em
+                break
+
+    cmd_str = f"bash -c 'echo $$ > {pid_file}; exec {server_script} {args_str} 2>&1 | tee {log_file}'"
+
+    console.print(Panel(
+        f"[bold yellow]Unsloth Studio is not running on {endpoint}[/bold yellow]\n\n"
+        f"Launching [cyan]{server_script} {args_str}[/cyan] in a new terminal window to start the server.",
+        title="Starting Unsloth Studio",
+        expand=False
+    ))
+
+    launched = False
+    if emulator:
+        try:
+            if emulator == "gnome-terminal":
+                subprocess.Popen(["gnome-terminal", "--", "bash", "-c", cmd_str])
+            elif emulator == "konsole":
+                subprocess.Popen(["konsole", "-e", "bash", "-c", cmd_str])
+            elif emulator in ["xfce4-terminal", "xterm", "uxterm", "alacritty"]:
+                subprocess.Popen([emulator, "-e", f"bash -c \"{cmd_str}\""])
+            elif emulator == "kitty":
+                subprocess.Popen(["kitty", "bash", "-c", cmd_str])
+            launched = True
+            console.print(f"[green]Opened new terminal window using {emulator} for server startup.[/green]")
+        except Exception as e:
+            console.print(f"[yellow]Failed to launch terminal emulator '{emulator}': {e}[/yellow]")
+            launched = False
+
+    if not launched:
+        console.print("[bold yellow]Please start the server manually in a new terminal window using this command:[/bold yellow]")
+        console.print(f"    {server_script} {args_str}")
+        console.print("\nPress [bold green]Enter[/bold green] when the server has started.")
+        try:
+            input()
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(1)
+        return
+
+    # If launched, monitor endpoint for startup confirmation
+    console.print("[cyan]Waiting for Unsloth Studio to initialize...[/cyan]")
+    
+    detect_host = host or "127.0.0.1"
+    detect_port = port or "8888"
+    start_time = time.time()
+    success_status = False
+    import urllib.error
+
+    try:
+        with Live(Text("Initializing...", style="yellow"), console=console, refresh_per_second=2) as live:
+            while True:
+                try:
+                    url = f"http://{detect_host}:{detect_port}/v1/models"
+                    headers = {}
+                    token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=1.0) as resp:
+                        if resp.status == 200:
+                            success_status = True
+                            break
+                except urllib.error.HTTPError:
+                    success_status = True
+                    break
+                except Exception:
+                    pass
+
+                # Check for timeout (5 minutes)
+                elapsed = time.time() - start_time
+                if elapsed > 300:
+                    break
+
+                live.update(Text(f"Waiting for Unsloth Studio... ({int(elapsed)}s elapsed)", style="yellow"))
+                time.sleep(1.5)
+    except (KeyboardInterrupt, SystemExit):
+        console.print("\n[yellow]Startup monitoring interrupted.[/yellow]")
+        sys.exit(1)
+
+    if success_status:
+        console.print("[bold green]Success! Unsloth Studio has successfully started.[/bold green]\n")
+        focus_current_terminal()
+        time.sleep(1.0)
+    else:
+        console.print("[bold red]Timeout: Could not detect successful server startup.[/bold red]")
         sys.exit(1)
 
 def print_history_in_markdown(messages: List[Dict[str, Any]]):
@@ -1862,6 +2015,7 @@ HTML_CONTENT = """
                 <select id="backend-select" class="dropdown-control">
                     <option value="ollama">Ollama (Local)</option>
                     <option value="llamacpp">llama.cpp Server</option>
+                    <option value="unsloth">Unsloth Studio</option>
                 </select>
             </div>
             <div>
@@ -1956,7 +2110,7 @@ HTML_CONTENT = """
         const AVAILABLE_COMMANDS = ['/bye', '/exit', '/clear', '/compact', '/history', '/sessions', '/save'];
         let activeSessionId = null;
         let activeMessages = [];
-        let modelsList = { ollama: [], llamacpp: [] };
+        let modelsList = { ollama: [], llamacpp: [], unsloth: [] };
         
         // DOM Elements
         const backendSelect = document.getElementById('backend-select');
@@ -2756,7 +2910,7 @@ HTML_CONTENT = """
 </html>
 """
 
-def run_web_server(endpoint_arg: str = None, temperature: float = 0.7, no_tools: bool = False):
+def run_web_server(endpoint_arg: str = None, temperature: float = 0.7, no_tools: bool = False, backend_arg: str = None):
     try:
         from fastapi import FastAPI, Request
         from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -2766,7 +2920,7 @@ def run_web_server(endpoint_arg: str = None, temperature: float = 0.7, no_tools:
         import asyncio
     except ImportError:
         console.print("[bold red]Error: fastapi and uvicorn are required for web mode.[/bold red]")
-        console.print("[yellow]Please run: ./install.sh to install them.[/yellow]")
+        console.print("[yellow]Please install them in your Python virtual environment (e.g. pip install fastapi uvicorn).[/yellow]")
         sys.exit(1)
 
     app = FastAPI(title="LLM Chat Terminal Web App")
@@ -2779,9 +2933,13 @@ def run_web_server(endpoint_arg: str = None, temperature: float = 0.7, no_tools:
         allow_headers=["*"],
     )
 
-    nonlocal_endpoint = endpoint_arg
+    nonlocal_endpoint = endpoint_arg if (backend_arg == 'llamacpp' or not backend_arg) else "http://localhost:8080"
     if not nonlocal_endpoint:
         nonlocal_endpoint = "http://localhost:8080"
+
+    nonlocal_unsloth_endpoint = endpoint_arg if (backend_arg == 'unsloth') else "http://localhost:8888"
+    if not nonlocal_unsloth_endpoint:
+        nonlocal_unsloth_endpoint = "http://localhost:8888"
 
     tools_list = [] if no_tools else list(AVAILABLE_TOOLS.values())
     generation_options = {"temperature": temperature}
@@ -2876,11 +3034,27 @@ Follow these core principles at all times:
                 llamacpp_models = [m.get("id") for m in data.get("data", [])]
         except Exception:
             pass
+
+        unsloth_models = []
+        try:
+            url = f"{nonlocal_unsloth_endpoint.rstrip('/')}/v1/models"
+            headers = {}
+            token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                unsloth_models = [m.get("id") for m in data.get("data", [])]
+        except Exception:
+            pass
             
         return {
             "ollama": ollama_models,
             "llamacpp": llamacpp_models,
-            "llamacpp_endpoint": nonlocal_endpoint
+            "llamacpp_endpoint": nonlocal_endpoint,
+            "unsloth": unsloth_models,
+            "unsloth_endpoint": nonlocal_unsloth_endpoint
         }
 
     @app.post("/api/sessions/{session_id}/clear")
@@ -2916,7 +3090,12 @@ Follow these core principles at all times:
             
             backend = sdata.get("backend", "ollama")
             selected_model = sdata.get("model")
-            endpoint = sdata.get("endpoint", nonlocal_endpoint)
+            endpoint = sdata.get("endpoint")
+            if not endpoint:
+                if backend == "unsloth":
+                    endpoint = nonlocal_unsloth_endpoint
+                else:
+                    endpoint = nonlocal_endpoint
             
             summary_prompt = {
                 "role": "user", 
@@ -2947,10 +3126,15 @@ Follow these core principles at all times:
                 
                 loop = asyncio.get_event_loop()
                 def call_llamacpp():
+                    headers = {'Content-Type': 'application/json'}
+                    if backend == "unsloth":
+                        token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                        if token:
+                            headers["Authorization"] = f"Bearer {token}"
                     req = urllib.request.Request(
                         url,
                         data=json.dumps(payload).encode('utf-8'),
-                        headers={'Content-Type': 'application/json'}
+                        headers=headers
                     )
                     with urllib.request.urlopen(req) as resp:
                         res_data = json.loads(resp.read().decode('utf-8'))
@@ -3026,7 +3210,12 @@ Follow these core principles at all times:
             session_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
         backend = data.get("backend", "ollama")
-        endpoint = data.get("endpoint", nonlocal_endpoint)
+        endpoint = data.get("endpoint")
+        if not endpoint:
+            if backend == "unsloth":
+                endpoint = nonlocal_unsloth_endpoint
+            else:
+                endpoint = nonlocal_endpoint
         model = data.get("model")
         messages = sanitize_messages(data.get("messages", []))
 
@@ -3141,10 +3330,15 @@ Follow these core principles at all times:
                             
                         def fetch_llamacpp():
                             url = f"{endpoint.rstrip('/')}/v1/chat/completions"
+                            headers = {'Content-Type': 'application/json'}
+                            if backend == "unsloth":
+                                token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                                if token:
+                                    headers["Authorization"] = f"Bearer {token}"
                             req = urllib.request.Request(
                                 url,
                                 data=json.dumps(payload).encode('utf-8'),
-                                headers={'Content-Type': 'application/json'}
+                                headers=headers
                             )
                             return urllib.request.urlopen(req)
                             
@@ -3378,9 +3572,9 @@ Follow these core principles at all times:
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 def main():
-    parser = argparse.ArgumentParser(description="LLM Chat Terminal with Tools (supports Ollama and llama.cpp)")
-    parser.add_argument("-b", "--backend", type=str, choices=["ollama", "llamacpp"], help="Backend to use (ollama or llamacpp)")
-    parser.add_argument("-e", "--endpoint", type=str, help="Custom endpoint URL (defaults: ollama system client, llamacpp: http://localhost:8080)")
+    parser = argparse.ArgumentParser(description="LLM Chat Terminal with Tools (supports Ollama, llama.cpp, and Unsloth Studio)")
+    parser.add_argument("-b", "--backend", type=str, choices=["ollama", "llamacpp", "unsloth"], help="Backend to use (ollama, llamacpp, or unsloth)")
+    parser.add_argument("-e", "--endpoint", type=str, help="Custom endpoint URL (defaults: ollama system client, llamacpp: http://localhost:8080, unsloth: http://localhost:8888)")
     parser.add_argument("-m", "--model", type=str, help="Model name to use")
     parser.add_argument("-s", "--system", type=str, help="Custom system prompt override (or path to a system prompt text file)")
     parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Generation temperature (default: 0.7)")
@@ -3390,7 +3584,7 @@ def main():
     args = parser.parse_args()
 
     if args.web:
-        run_web_server(endpoint_arg=args.endpoint, temperature=args.temperature, no_tools=args.no_tools)
+        run_web_server(endpoint_arg=args.endpoint, temperature=args.temperature, no_tools=args.no_tools, backend_arg=args.backend)
         return
 
     # Determine backend
@@ -3419,6 +3613,21 @@ def main():
                 llamacpp_models = [m.get("id") for m in data.get("data", [])]
         except Exception:
             pass
+
+        unsloth_models = []
+        detect_unsloth_endpoint = endpoint or "http://localhost:8888"
+        try:
+            url = f"{detect_unsloth_endpoint.rstrip('/')}/v1/models"
+            headers = {}
+            token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                unsloth_models = [m.get("id") for m in data.get("data", [])]
+        except Exception:
+            pass
             
         if ollama_models:
             console.print(Panel("[bold cyan]Available Ollama Models:[/bold cyan]"))
@@ -3428,7 +3637,11 @@ def main():
             console.print(Panel(f"[bold cyan]Available models on llama.cpp server ({detect_endpoint}):[/bold cyan]"))
             for i, m in enumerate(llamacpp_models, 1):
                 console.print(f"  [bold green]{i}.[/bold green] [cyan]{m}[/cyan]")
-        if not ollama_models and not llamacpp_models:
+        if unsloth_models:
+            console.print(Panel(f"[bold cyan]Available models on Unsloth Studio ({detect_unsloth_endpoint}):[/bold cyan]"))
+            for i, m in enumerate(unsloth_models, 1):
+                console.print(f"  [bold green]{i}.[/bold green] [cyan]{m}[/cyan]")
+        if not ollama_models and not llamacpp_models and not unsloth_models:
             console.print("[bold red]No running LLM backends detected to list models.[/bold red]")
         sys.exit(0)
 
@@ -3505,6 +3718,40 @@ def main():
                     console.print(f"  [bold green]{i}.[/bold green] [cyan]{m}[/cyan]")
                 choice = IntPrompt.ask("\nSelect a model by number", choices=[str(i) for i in range(1, len(ollama_models) + 1)])
                 selected_model = ollama_models[choice - 1]
+        elif backend == "unsloth":
+            if not endpoint:
+                endpoint = "http://localhost:8888"
+            server_running = False
+            try:
+                url = f"{endpoint.rstrip('/')}/v1/models"
+                headers = {}
+                token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status == 200:
+                        server_running = True
+            except urllib.error.HTTPError:
+                server_running = True
+            except Exception:
+                pass
+            if not server_running:
+                start_unsloth_server(endpoint)
+            if not selected_model:
+                try:
+                    url = f"{endpoint.rstrip('/')}/v1/models"
+                    headers = {}
+                    token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req) as resp:
+                        data = json.loads(resp.read().decode('utf-8'))
+                        available_models = [m.get("id") for m in data.get("data", [])]
+                        selected_model = available_models[0] if available_models else "unsloth-model"
+                except Exception:
+                    selected_model = "unsloth-model"
         else:
             if not endpoint:
                 endpoint = "http://localhost:8080"
@@ -3574,6 +3821,27 @@ def main():
             except Exception:
                 pass
             
+            unsloth_running = False
+            detect_unsloth_endpoint = endpoint or "http://localhost:8888"
+            unsloth_models = []
+            import urllib.error
+            try:
+                url = f"{detect_unsloth_endpoint.rstrip('/')}/v1/models"
+                headers = {}
+                token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status == 200:
+                        unsloth_running = True
+                        data = json.loads(resp.read().decode('utf-8'))
+                        unsloth_models = [m.get("id") for m in data.get("data", [])]
+            except urllib.error.HTTPError:
+                unsloth_running = True
+            except Exception:
+                pass
+            
             server_script = os.path.expanduser("~/run_llama_server.sh")
             server_script_exists = os.path.exists(server_script)
             
@@ -3603,6 +3871,19 @@ def main():
                     options.append({"type": "llamacpp_start", "data": detect_endpoint})
                     opt_idx += 1
                 menu_lines.append("")
+
+            menu_lines.append("[bold cyan]Start New Unsloth Studio Session:[/bold cyan]")
+            if unsloth_running and unsloth_models:
+                for m in unsloth_models:
+                    menu_lines.append(f"  [bold green]{opt_idx}.[/bold green] [cyan]{m}[/cyan] ({detect_unsloth_endpoint})")
+                    options.append({"type": "unsloth", "data": {"model": m, "endpoint": detect_unsloth_endpoint}})
+                    opt_idx += 1
+            else:
+                label = f"Connect to running Unsloth Studio ({detect_unsloth_endpoint})" if unsloth_running else f"Connect to Unsloth Studio ({detect_unsloth_endpoint})"
+                menu_lines.append(f"  [bold green]{opt_idx}.[/bold green] [cyan]{label}[/cyan]")
+                options.append({"type": "unsloth", "data": {"model": "unsloth-model", "endpoint": detect_unsloth_endpoint}})
+                opt_idx += 1
+            menu_lines.append("")
                 
             if sessions:
                 menu_lines.append("[bold yellow]Recent Chat Sessions:[/bold yellow]")
@@ -3626,6 +3907,7 @@ def main():
                     "Please make sure either:\n"
                     "  - [bold]Ollama[/bold] is running (start Ollama service)\n"
                     "  - A [bold]llama.cpp server[/bold] is running on http://localhost:8080\n"
+                    "  - An [bold]Unsloth Studio[/bold] endpoint is running on http://localhost:8888\n"
                     "  - The script [bold]~/run_llama_server.sh[/bold] is available to start the server",
                     title="Startup Error",
                     border_style="red"
@@ -3796,6 +4078,28 @@ def main():
                             selected_model = available_models[0] if available_models else "llama.cpp-model"
                     except Exception:
                         selected_model = "llama.cpp-model"
+                        
+                elif selected["type"] == "unsloth":
+                    backend = "unsloth"
+                    endpoint = selected["data"]["endpoint"]
+                    selected_model = selected["data"]["model"]
+                    server_running = False
+                    try:
+                        url = f"{endpoint.rstrip('/')}/v1/models"
+                        headers = {}
+                        token = os.getenv("UNSLOTH_STUDIO_AUTH_TOKEN")
+                        if token:
+                            headers["Authorization"] = f"Bearer {token}"
+                        req = urllib.request.Request(url, headers=headers)
+                        with urllib.request.urlopen(req, timeout=1.0) as resp:
+                            if resp.status == 200:
+                                server_running = True
+                    except urllib.error.HTTPError:
+                        server_running = True
+                    except Exception:
+                        pass
+                    if not server_running:
+                        start_unsloth_server(endpoint)
                         
                 break # normal selection made, exit the startup menu loop
             except (KeyboardInterrupt, EOFError):
@@ -4083,6 +4387,8 @@ Follow these core principles at all times:
             # Stream the response
             if backend == "ollama":
                 assistant_msg = stream_and_process(selected_model, messages, tools_list, options=generation_options)
+            elif backend == "unsloth":
+                assistant_msg = stream_and_process_unsloth(endpoint, selected_model, messages, tools_list, options=generation_options)
             else:
                 assistant_msg = stream_and_process_llamacpp(endpoint, selected_model, messages, tools_list, options=generation_options)
             

@@ -16,45 +16,38 @@ This application bridges the gap between raw LLM APIs and the power of agentic t
   - `/clear`: Instantly wipes the conversation memory to start fresh.
   - **Auto-Warning**: The UI warns you if the conversation context is growing too large (30+ messages).
 
-## 🛠️ Installation (Linux)
-
-You can install this app globally on any Linux machine so you can run it from anywhere.
+## 🛠️ Installation & Setup (Linux)
 
 1. Clone or download this repository.
-2. Run the provided installation script:
+2. Set up a Python virtual environment and install the required dependencies:
 
 ```bash
-./install.sh
+# Create a virtual environment
+python3 -m venv .venv
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
-
-### What `install.sh` does:
-- Creates an isolated Python virtual environment in `~/.local/share/llm-chat/venv`.
-- Installs all dependencies automatically (it utilizes `uv` if installed for ultra-fast setup, otherwise falls back to standard `pip`).
-- Copies the script and creates a globally accessible executable wrapper at `~/.local/bin/llm-chat`.
-
-*(Note: Ensure `~/.local/bin` is in your system's `$PATH`)*
-
-## 🗑️ Uninstall
-
-To completely remove the app and all its data:
-
-```bash
-./uninstall.sh
-```
-
-This removes the virtual environment, cached data, saved sessions, and the `llm-chat` executable wrapper. You'll be asked to confirm before anything is deleted.
 
 ## 🚀 Usage
 
-Once installed, simply invoke the app:
+Activate your virtual environment and run the chat application:
 
 ```bash
-llm-chat
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run the app
+python llm_chat.py
 ```
 
-By default, the app will automatically detect which backend (Ollama or llama.cpp) is running:
-- If only Ollama is running, it lists your models and lets you select one interactively.
-- If only llama.cpp is running, it connects automatically to your local llama.cpp server and starts the chat.
+By default, the app will automatically detect which backend (Ollama, llama.cpp, or Unsloth Studio) is running:
+- If Ollama is running, it lists your models and lets you select one interactively.
+- If llama.cpp is running, it connects automatically to your local llama.cpp server and starts the chat.
+- If Unsloth Studio is running, it connects automatically to your local Unsloth Studio server and starts the chat.
 
 ### Custom Backend Arguments
 
@@ -62,13 +55,16 @@ You can explicitly force a backend or override the endpoints:
 
 ```bash
 # Force Ollama backend
-llm-chat -b ollama
+python llm_chat.py -b ollama
 
 # Force llama.cpp backend with a custom port/host
-llm-chat -b llamacpp -e http://localhost:8080
+python llm_chat.py -b llamacpp -e http://localhost:8080
+
+# Force Unsloth Studio backend with a custom port/host
+python llm_chat.py -b unsloth -e http://localhost:8888
 
 # Specify model directly
-llm-chat -b llamacpp -m my-custom-model
+python llm_chat.py -b llamacpp -m my-custom-model
 ```
 
 ### Chat Commands
