@@ -1,96 +1,118 @@
-# LLM Chat Terminal 🚀
+# 🚀 LLM Chat Terminal — Agentic Local AI CLI
 
-> **App Root Folder:** `/mnt/1fc0b605-b95c-4190-ba0a-ae87f22cc120/development/llm_chat`
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Ollama](https://img.shields.io/badge/Ollama-Supported-000000?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.ai)
+[![llama.cpp](https://img.shields.io/badge/llama.cpp-Server-FF6B6B?style=for-the-badge)](https://github.com/ggerganov/llama.cpp)
+[![Rich](https://img.shields.io/badge/UI-Rich_%26_Prompt_Toolkit-306998?style=for-the-badge)](https://github.com/Textualize/rich)
+[![DeepSeek-R1](https://img.shields.io/badge/Reasoning-DeepSeek_R1_Ready-blue?style=for-the-badge)](https://deepseek.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
+An advanced, feature-rich command-line interface for interacting with local LLM backends (**Ollama**, **llama.cpp**, and **Unsloth Studio**). Bridges raw local model APIs with agentic capabilities—including real-time multi-threaded web search, live reasoning stream visualization (DeepSeek R1), and automatic context compaction.
 
-An advanced, feature-rich command-line interface for interacting with LLM backends (Ollama and llama.cpp).
+---
 
-This application bridges the gap between raw LLM APIs and the power of agentic tools, allowing models to perform parallel web searches, process deep reasoning, and maintain long-context conversations right from your terminal.
+## ✨ Key Features
 
-## ✨ Features
+- 🔄 **Multi-Backend Auto-Detection**: Automatically detects active Ollama, llama.cpp, or Unsloth Studio servers on launch with zero manual configuration.
+- 🌐 **Parallel Web Search Agent**: Enables local models to autonomously generate search queries and execute concurrent DuckDuckGo searches across worker threads, deduplicating and ingesting live web sources.
+- 🧠 **Native Reasoning Stream (CoT)**: Beautifully renders Chain-of-Thought thinking traces (such as DeepSeek-R1) in a dimmed, bounded panel in real-time before streaming the final response.
+- 🎨 **Rich Terminal Experience**: Syntax-highlighted code blocks, Markdown tables, multi-line prompts with history navigation (↑/↓), and customizable color palettes.
+- 🧠 **Intelligent Context Management**:
+  - `/compact`: Condenses full conversation history into a semantic summary to preserve model context.
+  - `/clear`: Resets active session memory immediately.
+  - **Context Warning**: Proactively monitors token memory and notifies you when conversations exceed optimal limits.
+- 🧩 **Extensible Tool Registry**: Add custom Python functions as model-callable tools via standard Python docstrings and type hints.
 
-- **Multi-Backend Support**: Connect seamlessly to **Ollama** or a local **llama.cpp** HTTP server.
-- **Auto-Detection**: Dynamically checks which backend is currently running on startup so you don't have to specify any options.
-- **Beautiful Terminal UI**: Powered by `Rich` and `prompt_toolkit`. Features full Markdown rendering, syntax highlighting for code blocks, and an interactive prompt with history (Up/Down arrows).
-- **Parallel Web Search Tool**: Models can execute live internet searches. If a model needs context, it generates multiple queries which are executed concurrently across 5 worker threads via DuckDuckGo, automatically deduping and formatting the results. Works out-of-the-box on both Ollama and llama.cpp.
-- **Native Reasoning Support**: Flawlessly supports reasoning models (like DeepSeek R1). The model's "thinking" process is beautifully streamed into a dim, bounded panel in real-time, separating internal logic from the final answer.
-- **Context Management**: 
-  - `/compact`: Instructs the model to read the entire conversation history, generate a highly concise summary, and replace the bulky history with the summary to save memory.
-  - `/clear`: Instantly wipes the conversation memory to start fresh.
-  - **Auto-Warning**: The UI warns you if the conversation context is growing too large (30+ messages).
+---
 
-## 🛠️ Installation & Setup (Linux)
+## 🛠️ Architecture & Supported Backends
 
-1. Clone or download this repository.
-2. Set up a Python virtual environment and install the required dependencies:
+```
+  ┌─────────────────────────────────────────────────────────┐
+  │                 LLM Chat Terminal (CLI)                 │
+  │     (prompt_toolkit interactive prompt + Rich UI)       │
+  └───────────┬─────────────────────────────────┬───────────┘
+              │                                 │
+     [ Agentic Tool Loop ]              [ Inference Layer ]
+              │                                 │
+   • Parallel DuckDuckGo Search      • Ollama API (:11434)
+   • Context Auto-Compaction         • llama.cpp Server (:8080)
+   • Custom Python Tool Registry     • Unsloth Studio (:8888)
+```
 
+---
+
+## 🚀 Quick Start Guide
+
+### Prerequisites
+- Python 3.10+
+- An active local LLM runtime ([Ollama](https://ollama.ai) or [llama.cpp server](https://github.com/ggerganov/llama.cpp))
+
+### 1. Clone & Set Up
 ```bash
-# Create a virtual environment
+git clone https://github.com/AnupamKhurana/llm-chat.git
+cd llm-chat
+```
+
+### 2. Install Dependencies
+```bash
 python3 -m venv .venv
-
-# Activate the virtual environment
-source .venv/bin/activate
-
-# Install dependencies
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 🚀 Usage
-
-Activate your virtual environment and run the chat application:
-
+### 3. Launch
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
-
-# Run the app
 python llm_chat.py
 ```
+The CLI automatically scans your local network ports:
+- If **Ollama** is running, it prompts with an interactive model selector.
+- If **llama.cpp server** is running, it connects and initializes streaming.
+- If **Unsloth Studio** is running, it connects seamlessly.
 
-By default, the app will automatically detect which backend (Ollama, llama.cpp, or Unsloth Studio) is running:
-- If Ollama is running, it lists your models and lets you select one interactively.
-- If llama.cpp is running, it connects automatically to your local llama.cpp server and starts the chat.
-- If Unsloth Studio is running, it connects automatically to your local Unsloth Studio server and starts the chat.
+---
 
-### Custom Backend Arguments
-
-You can explicitly force a backend or override the endpoints:
+## ⚙️ Command-Line Options
 
 ```bash
-# Force Ollama backend
+# Force a specific backend
 python llm_chat.py -b ollama
-
-# Force llama.cpp backend with a custom port/host
 python llm_chat.py -b llamacpp -e http://localhost:8080
-
-# Force Unsloth Studio backend with a custom port/host
 python llm_chat.py -b unsloth -e http://localhost:8888
 
-# Specify model directly
-python llm_chat.py -b llamacpp -m my-custom-model
+# Directly specify a model
+python llm_chat.py -b ollama -m deepseek-r1:8b
 ```
 
-### Chat Commands
-Once inside the chat interface, you can use the following commands:
-- **`>>> /clear`** - Wipes all conversation history.
-- **`>>> /compact`** - Replaces your long conversation history with an intelligent summary to save context space.
-- **`>>> /bye`** or **`/exit`** - Exits the application.
+### Interactive In-Chat Commands
 
-## 📦 Adding Custom Tools
+| Command | Action |
+| :--- | :--- |
+| `>>> /compact` | Summarizes older turns and frees token context |
+| `>>> /clear` | Wipes active context memory |
+| `>>> /bye` or `/exit` | Gracefully closes the session |
 
-The app is designed to be easily extensible. Open `llm_chat.py` and you'll find an `AVAILABLE_TOOLS` registry:
+---
+
+## 🧩 Adding Custom Agentic Tools
+
+Adding new tools is straightforward. Register any typed Python function into `AVAILABLE_TOOLS`:
 
 ```python
-# Registry for tools
+def fetch_weather(location: str) -> str:
+    """Fetch real-time weather information for a specified city or location."""
+    # Custom API or logic here
+    return f"Weather in {location}: 24°C, Sunny"
+
 AVAILABLE_TOOLS = {
     "web_search": web_search,
-    # "my_custom_tool": my_custom_tool,
+    "fetch_weather": fetch_weather,
 }
 ```
+The CLI auto-generates JSON function schemas and injects execution results back into the model prompt.
 
-To add a new tool:
-1. Define a standard Python function.
-2. Ensure you add robust **type hints** and a clear **docstring** (both backends parse these schemas to understand how to use the tool).
-3. Add your function to the `AVAILABLE_TOOLS` dictionary.
+---
 
-The terminal UI will automatically handle generating the appropriate JSON schemas, executing the tools, and formatting their results!
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for details.
