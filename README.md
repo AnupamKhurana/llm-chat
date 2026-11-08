@@ -1,5 +1,8 @@
 # LLM Chat Terminal 🚀
 
+> **App Root Folder:** `/mnt/1fc0b605-b95c-4190-ba0a-ae87f22cc120/development/llm_chat`
+
+
 An advanced, feature-rich command-line interface for interacting with LLM backends (Ollama and llama.cpp).
 
 This application bridges the gap between raw LLM APIs and the power of agentic tools, allowing models to perform parallel web searches, process deep reasoning, and maintain long-context conversations right from your terminal.
